@@ -71,6 +71,11 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
     GenServer.call(process_manager, :process_state)
   end
 
+  @doc """
+  Get the current process manager instance's identity.
+  """
+  def identity, do: Process.get(:process_uuid)
+
   @doc false
   @impl GenServer
   def init(%State{} = state) do
@@ -85,7 +90,7 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
     %State{application: application} = state
 
     state =
-      case EventStore.read_snapshot(application, process_state_uuid(state)) do
+      case EventStore.read_snapshot(application, snapshot_uuid(state)) do
         {:ok, snapshot} ->
           %State{
             state
@@ -96,6 +101,15 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
         {:error, :snapshot_not_found} ->
           state
       end
+
+    {:noreply, state, {:continue, :set_process_uuid}}
+  end
+
+  @impl GenServer
+  def handle_continue(:set_process_uuid, %State{} = state) do
+    %State{process_uuid: process_uuid} = state
+
+    Process.put(:process_uuid, process_uuid)
 
     {:noreply, state}
   end
@@ -386,7 +400,7 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
     } = state
 
     snapshot = %SnapshotData{
-      source_uuid: process_state_uuid(state),
+      source_uuid: snapshot_uuid(state),
       source_version: source_version,
       source_type: Atom.to_string(process_manager_module),
       data: process_state
@@ -398,7 +412,7 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
   defp delete_state(%State{} = state) do
     %State{application: application} = state
 
-    EventStore.delete_snapshot(application, process_state_uuid(state))
+    EventStore.delete_snapshot(application, snapshot_uuid(state))
   end
 
   defp ack_event(%RecordedEvent{} = event, %State{} = state) do
@@ -407,11 +421,8 @@ defmodule Commanded.ProcessManagers.ProcessManagerInstance do
     ProcessRouter.ack_event(process_router, event, self())
   end
 
-  defp process_state_uuid(%State{} = state) do
-    %State{
-      process_manager_name: process_manager_name,
-      process_uuid: process_uuid
-    } = state
+  defp snapshot_uuid(%State{} = state) do
+    %State{process_manager_name: process_manager_name, process_uuid: process_uuid} = state
 
     inspect(process_manager_name) <> "-" <> inspect(process_uuid)
   end
